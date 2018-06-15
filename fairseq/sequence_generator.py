@@ -54,7 +54,7 @@ class SequenceGenerator(object):
 
     def generate_batched_itr(
         self, data_itr, beam_size=None, maxlen_a=0.0, maxlen_b=None,
-        cuda=False, timer=None, prefix_size=0,
+        cuda=False, timer=None, prefix_size=0, add_latent_variables=None
     ):
         """Iterate over a batched dataset and yield individual translations.
         Args:
@@ -70,32 +70,38 @@ class SequenceGenerator(object):
             s = utils.move_to_cuda(sample) if cuda else sample
             if 'net_input' not in s:
                 continue
-            input = s['net_input']
-            srclen = input['src_tokens'].size(1)
+            net_input, target = s['net_input'], s['target']
+            if add_latent_variables is not None:
+                net_input, target = add_latent_variables(net_input, target)
+            srclen = net_input['src_tokens'].size(1)
             if timer is not None:
                 timer.start()
             with torch.no_grad():
                 hypos = self.generate(
-                    input['src_tokens'],
-                    input['src_lengths'],
+                    net_input['src_tokens'],
+                    net_input['src_lengths'],
                     beam_size=beam_size,
                     maxlen=int(maxlen_a*srclen + maxlen_b),
-                    prefix_tokens=s['target'][:, :prefix_size] if prefix_size > 0 else None,
+                    prefix_tokens=target[:, :prefix_size] if prefix_size > 0 else None,
+                    init_token=net_input['prev_output_tokens'][:, 0]
                 )
             if timer is not None:
                 timer.stop(sum(len(h[0]['tokens']) for h in hypos))
+            bsz = s['net_input']['src_tokens'].size(0)
+            k = int(net_input['src_tokens'].size(0) / bsz)
             for i, id in enumerate(s['id'].data):
                 # remove padding
-                src = utils.strip_pad(input['src_tokens'].data[i, :], self.pad)
+                src = utils.strip_pad(s['net_input']['src_tokens'].data[i, :], self.pad)
                 ref = utils.strip_pad(s['target'].data[i, :], self.pad) if s['target'] is not None else None
-                yield id, src, ref, hypos[i]
+                for j in range(k):
+                    yield id, src, ref, hypos[i + j * bsz]
 
-    def generate(self, src_tokens, src_lengths, beam_size=None, maxlen=None, prefix_tokens=None):
+    def generate(self, src_tokens, src_lengths, beam_size=None, maxlen=None, prefix_tokens=None, init_token=None):
         """Generate a batch of translations."""
         with torch.no_grad():
-            return self._generate(src_tokens, src_lengths, beam_size, maxlen, prefix_tokens)
+            return self._generate(src_tokens, src_lengths, beam_size, maxlen, prefix_tokens, init_token)
 
-    def _generate(self, src_tokens, src_lengths, beam_size=None, maxlen=None, prefix_tokens=None):
+    def _generate(self, src_tokens, src_lengths, beam_size=None, maxlen=None, prefix_tokens=None, init_token=None):
         bsz, srclen = src_tokens.size()
         maxlen = min(maxlen, self.maxlen) if maxlen is not None else self.maxlen
 
@@ -125,7 +131,7 @@ class SequenceGenerator(object):
         scores_buf = scores.clone()
         tokens = src_tokens.data.new(bsz * beam_size, maxlen + 2).fill_(self.pad)
         tokens_buf = tokens.clone()
-        tokens[:, 0] = self.eos
+        tokens[:, 0] = init_token if init_token is not None else self.eos
         attn = scores.new(bsz * beam_size, src_tokens.size(1), maxlen + 2)
         attn_buf = attn.clone()
 

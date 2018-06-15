@@ -151,7 +151,10 @@ def train(args, trainer, task, epoch_itr):
     # log end-of-epoch stats
     stats = get_training_stats(trainer)
     for k, meter in extra_meters.items():
-        stats[k] = meter.avg
+        if k == 'latent_count':
+            stats[k] = meter.sum
+        else:
+            stats[k] = meter.avg
     progress.print(stats)
 
     # reset training meters
@@ -225,7 +228,10 @@ def validate(args, trainer, task, epoch_itr, subsets):
         # log validation stats
         stats = get_valid_stats(trainer)
         for k, meter in extra_meters.items():
-            stats[k] = meter.avg
+            if k == 'latent_count':
+                stats[k] = meter.sum
+            else:
+                stats[k] = meter.avg
         progress.print(stats)
 
         valid_losses.append(stats['valid_loss'])

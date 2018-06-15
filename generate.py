@@ -86,6 +86,7 @@ def main(args):
             translations = translator.generate_batched_itr(
                 t, maxlen_a=args.max_len_a, maxlen_b=args.max_len_b,
                 cuda=use_cuda, timer=gen_timer, prefix_size=args.prefix_size,
+                add_latent_variables=task.add_latent_variables if args.task=='diverse_translation' else None
             )
 
         wps_meter = TimeMeter()
